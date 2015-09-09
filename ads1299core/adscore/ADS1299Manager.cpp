@@ -77,6 +77,7 @@ void ADS1299Manager::setVersionOpenBCI(const int version)
 //reset all the ADS1299's settings.  Call however you'd like.  Stops all data acquisition
 void ADS1299Manager::reset(void)
 {
+  ADS1299::SDATAC();            // exit Read Data Continuous mode to communicate with ADS
   ADS1299::RESET();             // send RESET command to default all registers
   ADS1299::SDATAC();            // exit Read Data Continuous mode to communicate with ADS
   
@@ -158,13 +159,14 @@ void ADS1299Manager::activateChannel(int N_oneRef,uint8_t gainCode,uint8_t input
 };
 
 //note that N here one-referenced (ie [1...N]), not [0...N-1]
+//return true for active.
 bool ADS1299Manager::isChannelActive(int N_oneRef) {
 	 int N_zeroRef = N_oneRef-1;  //subtracts 1 so that we're counting from 0, not 1
 	 
 	 //get whether channel is active or not
 	 uint8_t reg = CH1SET+(uint8_t)N_zeroRef;
 	 uint8_t config = ADS1299::RREG(reg); msp430_delay_ms(1);
-	 bool chanState = ((config & 0x80)?0:1);
+	 bool chanState = ((config & 0x80)?0:1);   //bit7: 0(normal operation), 1(power down)
 	 return chanState;
 }
 
@@ -172,7 +174,7 @@ void ADS1299Manager::setAutoBiasGeneration(bool state) {
 	use_channels_for_bias = state;
 	
 	//step through the channels are recompute the bias state
-	for (int Ichan=1; Ichan<OPENBCI_NCHAN_PER_BOARD;Ichan++) {
+	for (int Ichan=1; Ichan<=OPENBCI_NCHAN_PER_BOARD;Ichan++) {
 		alterBiasBasedOnChannelState(Ichan);
 	}
 }
@@ -229,7 +231,7 @@ void ADS1299Manager::activateBiasForChannel(int N_oneRef) {
 // 
 void ADS1299Manager::changeChannelLeadOffDetection(int N_oneRef, int code_OFF_ON, int code_P_N_Both)
 {
-  uint8_t reg, config;
+  uint8_t reg, config_p, config_n;
 	
   //check the inputs
   if ((N_oneRef < 1) || (N_oneRef > OPENBCI_NCHAN_PER_BOARD)) return;
@@ -241,26 +243,32 @@ void ADS1299Manager::changeChannelLeadOffDetection(int N_oneRef, int code_OFF_ON
   if ((code_P_N_Both == PCHAN) || (code_P_N_Both == BOTHCHAN)) {
   	  //shut down the lead-off signal on the positive side
   	  reg = LOFF_SENSP;  //are we using the P inptus or the N inputs?
-  	  config = ADS1299::RREG(reg); //get the current lead-off settings
+  	  config_p = ADS1299::RREG(reg); //get the current lead-off settings
   	  if (code_OFF_ON == OFF) {
-  	  	  bitClear(config,N_zeroRef);                   //clear this channel's bit
+  	  	  bitClear(config_p,N_zeroRef);                   //clear this channel's bit
   	  } else {
-  	  	  bitSet(config,N_zeroRef); 			  //clear this channel's bit
+  	  	  bitSet(config_p,N_zeroRef); 			  //clear this channel's bit
   	  }
-  	  ADS1299::WREG(reg,config); msp430_delay_ms(1);  //send the modified byte back to the ADS
+  	  ADS1299::WREG(reg,config_p); msp430_delay_ms(1);  //send the modified byte back to the ADS
   }
   
   if ((code_P_N_Both == NCHAN) || (code_P_N_Both == BOTHCHAN)) {
   	  //shut down the lead-off signal on the negative side
   	  reg = LOFF_SENSN;  //are we using the P inptus or the N inputs?
-  	  config = ADS1299::RREG(reg); //get the current lead-off settings
+  	  config_n = ADS1299::RREG(reg); //get the current lead-off settings
   	  if (code_OFF_ON == OFF) {
-  	  	  bitClear(config,N_zeroRef);                   //clear this channel's bit
+  	  	  bitClear(config_n,N_zeroRef);                   //clear this channel's bit
   	  } else {
-  	  	  bitSet(config,N_zeroRef); 			  //clear this channel's bit
+  	  	  bitSet(config_n,N_zeroRef); 			  //clear this channel's bit
   	  }           //set this channel's bit
-  	  ADS1299::WREG(reg,config); msp430_delay_ms(1);  //send the modified byte back to the ADS
+  	  ADS1299::WREG(reg,config_n); msp430_delay_ms(1);  //send the modified byte back to the ADS
   }
+  if(config_p || config_n){
+	  ADS1299::WREG(CONFIG4,0x02);                      //enable lead-off comparators for lead off detection.
+  }else{
+	  ADS1299::WREG(CONFIG4,0x00);
+  }
+  msp430_delay_ms(1);
 }; 
 
 void ADS1299Manager::configureLeadOffDetection(uint8_t amplitudeCode, uint8_t freqCode)

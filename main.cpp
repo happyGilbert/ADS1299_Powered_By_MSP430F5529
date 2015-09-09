@@ -38,7 +38,11 @@ void main()
 	for (int chan=1; chan <= 8; chan++) {
 		ADSManager.activateChannel(chan, gainCode, inputType);
 	}
-	ADSManager.configureLeadOffDetection(LOFF_MAG_6NA, LOFF_FREQ_31p2HZ);
+	ADSManager.configureLeadOffDetection(LOFF_MAG_6NA, LOFF_FREQ_DC);
+	for (int chan=1; chan <= 8; chan++) {
+		ADSManager.changeChannelLeadOffDetection(chan, ON, NCHAN);
+	}
+//	ADSManager.changeChannelLeadOffDetection(1, ON, PCHAN);
 	ADSManager.printAllRegisters();
 	data = 0;
 	data = ADSManager.getDeviceID();
