@@ -13,12 +13,11 @@
 #include <stdint.h>
 #include "Definitions.h"
 
-#define bitRead(data, bit)  ((data & (0x01<<bit))?'1':'0')
 
 class ADS1299 {
 public:
     
-    void initialize();
+    void initialize(void (*cb)(void));
     
     //ADS1299 SPI Command Definitions (Datasheet, p35)
     //System Commands
@@ -45,14 +44,12 @@ public:
     
 
     //configuration
-    int DRDY_PORT, CS_PORT, START_PORT, RST_PORT; 		// pin numbers for DRDY and CS
-    int DRDY_PIN, CS_PIN, START_PIN, RST_PIN; 		// pin numbers for DRDY and CS
-    int DIVIDER;		// select SPI SCK frequency
-    int stat_1, stat_2;    // used to hold the status register for boards 1 and 2
+    uint8_t CS_PORT, START_PORT, RST_PORT; 		// pin numbers for DRDY and CS
+    uint8_t CS_PIN, START_PIN, RST_PIN; 		// pin numbers for DRDY and CS
+    uint16_t stat_1, stat_2;    // used to hold the status register for boards 1 and 2
     uint8_t regData [24];	// array is used to mirror register data
     long channelData [16];	// array used when reading channel data board 1+2
     bool verbose;		// turn on/off Serial feedback
-    bool isDaisy;		// does this have a daisy chain board?
     
     
 };

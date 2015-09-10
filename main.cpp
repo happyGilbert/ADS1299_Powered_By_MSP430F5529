@@ -11,9 +11,15 @@
 
 ADS1299Manager ADSManager;
 bool is_running = false;
-unsigned long sampleCounter = 0;
+unsigned int sampleCounter = 0;
 uint8_t gainCode = ADS_GAIN24;   //how much gain do I want
 uint8_t inputType = ADSINPUT_NORMAL;   //here's the normal way to setup the channels
+
+bool ads_rx_new = false;
+static void ads_data_ready_cb()
+{
+	ads_rx_new = true;
+}
 
 static inline void msp430PlatformInit(void)
 {
@@ -27,14 +33,14 @@ static inline void msp430PlatformInit(void)
 	__bis_SR_register(GIE);
 }
 
-volatile uint8_t data = 0;
+volatile uint8_t data0 = 0;
 
 void main()
 {
 	void serialEvent();
 	void startRunning();
 	msp430PlatformInit();
-	ADSManager.initialize();
+	ADSManager.initialize(ads_data_ready_cb);
 	for (int chan=1; chan <= 8; chan++) {
 		ADSManager.activateChannel(chan, gainCode, inputType);
 	}
@@ -44,18 +50,21 @@ void main()
 	}
 //	ADSManager.changeChannelLeadOffDetection(1, ON, PCHAN);
 	ADSManager.printAllRegisters();
-	data = 0;
-	data = ADSManager.getDeviceID();
+	ads_rx_new = false;
+	data0 = 0;
+	data0 = ADSManager.getDeviceID();
 	serialEvent();
 	startRunning();
 	while(1)
 	{
-	    while(!(ADSManager.isDataAvailable())){            // watch the DRDY pin
-	      msp430_delay_us(100);
+	    if(ads_rx_new){
+		    ADSManager.updateChannelData();
+		    sampleCounter++;
+		    ADSManager.writeChannelDataAsUAISLab(sampleCounter);
+		    ads_rx_new = false;
 	    }
-	    ADSManager.updateChannelData();
-	    sampleCounter++;
-	    ADSManager.writeChannelDataAsUAISLab(sampleCounter);
+	    __bis_SR_register(LPM0_bits + GIE);
+
 	}
 }
 

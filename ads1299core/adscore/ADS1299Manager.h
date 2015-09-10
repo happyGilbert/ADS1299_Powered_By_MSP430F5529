@@ -12,22 +12,9 @@
 #include <ADS1299.h>
 
 //Pick which version of OpenBCI you have
-#define OPENBCI_V1 (1)    //Sept 2013
-#define OPENBCI_V2 (2)    //Oct 24, 2013
+#define POSTIVE_INPUT (1)    //Sept 2013
+#define NEGATIVE_INPUT (2)    //Oct 24, 2013
 #define OPENBCI_NCHAN_PER_BOARD (8)  // number of EEG channels
-
-/*   Arduino Uno - Pin Assignments
-  SCK = 13
-  MISO [DOUT] = 12
-  MOSI [DIN] = 11
-  CS = 10; 
-  RESET = 9;
-  DRDY = 8;
-*/
-#define PIN_DRDY (8)
-#define PIN_RST (9)
-#define PIN_CS (10)
-#define SCK_MHZ (4)
 
 //gainCode choices
 #define ADS_GAIN01 (0b00000000)
@@ -72,38 +59,26 @@
 #define PCKT_EEG 0x30
 #define PCKT_END 0xC0
 
-#define bitSet(data, bit) data |= (0x01<<bit)
-#define bitClear(data, bit) data &= ~(0x01<<bit)
-
 class ADS1299Manager : public ADS1299 {
   public:
-    void initialize(void);                                     //initialize the ADS1299 controller.  Call once.  Assumes OpenBCI_V2
-    void initialize(int version,bool isDaisy);              //initialize the ADS1299 controller.  Call once.  Set which version of OpenBCI you're using.
-    void setVersionOpenBCI(int version);			//Set which version of OpenBCI you're using.
+    void initialize(void (*cb)(void));                                     //initialize the ADS1299 controller.  Call once.  Assumes OpenBCI_V2
+    void initialize(void (*cb)(void),uint8_t version,bool isDaisy);              //initialize the ADS1299 controller.  Call once.  Set which version of OpenBCI you're using.
+    void setInputType(const uint8_t inputType);			//Set which version of OpenBCI you're using.
     void reset(void);                                          //reset all the ADS1299's settings.  Call however you'd like
-    bool isChannelActive(int N_oneRef);
-    void activateChannel(int N_oneRef, uint8_t gainCode,uint8_t inputCode); //setup the channel 1-8
-    void deactivateChannel(int N_oneRef);                            //disable given channel 1-8
+    bool isChannelActive(uint8_t N_oneRef);
+    void activateChannel(uint8_t N_oneRef, uint8_t gainCode,uint8_t inputCode); //setup the channel 1-8
+    void deactivateChannel(uint8_t N_oneRef);                            //disable given channel 1-8
     void configureLeadOffDetection(uint8_t amplitudeCode, uint8_t freqCode);  //configure the lead-off detection signal parameters
-    void changeChannelLeadOffDetection(int N_oneRef, int code_OFF_ON, int code_P_N_Both);
+    void changeChannelLeadOffDetection(uint8_t N_oneRef, uint8_t code_OFF_ON, uint8_t code_P_N_Both);
     void configureInternalTestSignal(uint8_t amplitudeCode, uint8_t freqCode);  //configure the test signal parameters
     void start(void);
     void stop(void);
-    int isDataAvailable(void);
-    void writeChannelDataAsUAISLab(uint32_t sampleNumber);
-//    void printChannelDataAsText(int N, long int sampleNumber);
-//    void writeChannelDataAsBinary(int N, long int sampleNumber);
-//    void writeChannelDataAsBinary(int N, long int sampleNumber, bool useSyntheticData);
-//    void writeChannelDataAsBinary(int N, long int sampleNumber, long int auxValue);
-//    void writeChannelDataAsBinary(int N, long int sampleNumber, long int auxValue, bool useSyntheticData);
-//    void writeChannelDataAsBinary(int N, long int sampleNumber, bool sendAuxValue,long int auxValue, bool useSyntheticData);
-//    void writeChannelDataAsOpenEEG_P2(long int sampleNumber);
-//    void writeChannelDataAsOpenEEG_P2(long int sampleNumber, bool useSyntheticData);
+    void writeChannelDataAsUAISLab(uint16_t sampleNumber);
     void printAllRegisters(void);
     void setSRB1(bool desired_state);
-    void alterBiasBasedOnChannelState(int N_oneRef);
-    void deactivateBiasForChannel(int N_oneRef);
-    void activateBiasForChannel(int N_oneRef);
+    void alterBiasBasedOnChannelState(uint8_t N_oneRef);
+    void deactivateBiasForChannel(uint8_t N_oneRef);
+    void activateBiasForChannel(uint8_t N_oneRef);
     void setAutoBiasGeneration(bool state);
     
     
@@ -112,8 +87,6 @@ class ADS1299Manager : public ADS1299 {
     bool use_SRB2[OPENBCI_NCHAN_PER_BOARD];
     bool use_channels_for_bias;
     bool use_SRB1(void);
-//    long int makeSyntheticSample(long sampleNumber,int chan);
-    int n_chan_all_boards;
 };
 
 #endif

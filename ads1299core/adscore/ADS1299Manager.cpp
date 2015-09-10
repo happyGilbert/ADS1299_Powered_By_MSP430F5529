@@ -6,49 +6,47 @@
 #include "msp430_uart.h"
 #include "gpio.h"
 
+#define bitSet(data, bit) data |= (0x01<<bit)
+#define bitClear(data, bit) data &= ~(0x01<<bit)
+
 typedef long int32;
 //typedef byte uint8_t;
 
 
-void ADS1299Manager::initialize(void) {
+void ADS1299Manager::initialize(void (*cb)(void)) {
 	bool isDaisy = false;
-    initialize(OPENBCI_V2,isDaisy);
+    initialize(cb,NEGATIVE_INPUT,isDaisy);
 }
 
 //Initilize the ADS1299 controller...call this once
-void ADS1299Manager::initialize(const int version,bool isDaisy)
+void ADS1299Manager::initialize(void (*cb)(void),const uint8_t inputType,bool isDaisy)
 {
-  ADS1299::initialize(); // (DRDY pin, RST pin, CS pin, SCK frequency in MHz);
+  ADS1299::initialize(cb);
   msp430_delay_ms(100);
     
-  verbose = false;      // when verbose is true, there will be Serial feedback 
-  setVersionOpenBCI(version);
+  verbose = false;              // when verbose is true, there will be Serial feedback
+  setInputType(inputType);
   reset();
   
-  n_chan_all_boards = OPENBCI_NCHAN_PER_BOARD;
-  if (isDaisy) n_chan_all_boards = 2*OPENBCI_NCHAN_PER_BOARD;
-  
   //set default state for internal test signal
-  //ADS1299::WREG(CONFIG2,0b11010000);delay(1);   //set internal test signal, default amplitude, default speed, datasheet PDF Page 41
-  //ADS1299::WREG(CONFIG2,0b11010001);delay(1);   //set internal test signal, default amplitude, 2x speed, datasheet PDF Page 41
   configureInternalTestSignal(ADSTESTSIG_AMP_1X,ADSTESTSIG_PULSE_FAST); //set internal test signal, default amplitude, 2x speed, datasheet PDF Page 41
   
   //set default state for lead off detection
-  configureLeadOffDetection(LOFF_MAG_6NA,LOFF_FREQ_31p2HZ);
+  configureLeadOffDetection(LOFF_MAG_6NA,LOFF_FREQ_DC);
 };
 
 //set which version of OpenBCI we're using.  This affects whether we use the 
 //positive or negative inputs.  It affects whether we use SRB1 or SRB2 for the
 //referenece signal.  Finally, it affects whether the lead_off signals are
 //flipped or not.
-void ADS1299Manager::setVersionOpenBCI(const int version)
+void ADS1299Manager::setInputType(const uint8_t inputType)
 {
-  if (version == OPENBCI_V1) {
+  if (inputType == POSTIVE_INPUT) {
   	  //set whether to use positive or negative inputs
   	  use_neg_inputs = false;
   	  
   	  //set SRB2
-  	  for (int i=0; i < OPENBCI_NCHAN_PER_BOARD; i++) {
+  	  for (uint8_t i=0; i < OPENBCI_NCHAN_PER_BOARD; i++) {
   	  	  use_SRB2[i] = false;
   	  }
   } else {
@@ -56,7 +54,7 @@ void ADS1299Manager::setVersionOpenBCI(const int version)
   	  use_neg_inputs = true;
   	  
   	  //set SRB
-  	  for (int i=0; i < OPENBCI_NCHAN_PER_BOARD; i++) {
+  	  for (uint8_t i=0; i < OPENBCI_NCHAN_PER_BOARD; i++) {
   	  	  use_SRB2[i] = true;
   	  }
   	  
@@ -84,7 +82,7 @@ void ADS1299Manager::reset(void)
   msp430_delay_ms(100);
     
   // turn off all channels
-  for (int chan=1; chan <= OPENBCI_NCHAN_PER_BOARD; chan++) {
+  for (uint8_t chan=1; chan <= OPENBCI_NCHAN_PER_BOARD; chan++) {
     deactivateChannel(chan);  //turn off the channel
     changeChannelLeadOffDetection(chan,OFF,BOTHCHAN); //turn off any impedance monitoring
   }
@@ -97,7 +95,7 @@ void ADS1299Manager::reset(void)
 //deactivate the given channel...note: stops data colleciton to issue its commands
 //  N_oneRef is the channel number: 1-8
 // 
-void ADS1299Manager::deactivateChannel(int N_oneRef)
+void ADS1299Manager::deactivateChannel(uint8_t N_oneRef)
 {
   uint8_t reg, config;
 	
@@ -108,11 +106,11 @@ void ADS1299Manager::deactivateChannel(int N_oneRef)
   ADS1299::SDATAC(); msp430_delay_ms(1);      // exit Read Data Continuous mode to communicate with ADS
 
   //shut down the channel
-  int N_zeroRef = N_oneRef-1;  //subtracts 1 so that we're counting from 0, not 1
+  uint8_t N_zeroRef = N_oneRef-1;  //subtracts 1 so that we're counting from 0, not 1
   reg = CH1SET+(uint8_t)N_zeroRef;
   config = ADS1299::RREG(reg); msp430_delay_ms(1);
   bitSet(config,7);  //left-most bit (bit 7) = 1, so this shuts down the channel
-  if (use_neg_inputs) bitClear(config,3);  //bit 3 = 0 disconnects SRB2
+  if (use_SRB2[N_zeroRef]) bitClear(config,3);  //bit 3 = 0 disconnects SRB2
   ADS1299::WREG(reg,config); msp430_delay_ms(1);
   
   //set how this channel affects the bias generation...
@@ -124,7 +122,7 @@ void ADS1299Manager::deactivateChannel(int N_oneRef)
 //  N is 1 through 8
 //  gainCode is defined in the macros in the header file
 //  inputCode is defined in the macros in the header file
-void ADS1299Manager::activateChannel(int N_oneRef,uint8_t gainCode,uint8_t inputCode)
+void ADS1299Manager::activateChannel(uint8_t N_oneRef,uint8_t gainCode,uint8_t inputCode)
 {
 	
    //check the inputs
@@ -160,8 +158,8 @@ void ADS1299Manager::activateChannel(int N_oneRef,uint8_t gainCode,uint8_t input
 
 //note that N here one-referenced (ie [1...N]), not [0...N-1]
 //return true for active.
-bool ADS1299Manager::isChannelActive(int N_oneRef) {
-	 int N_zeroRef = N_oneRef-1;  //subtracts 1 so that we're counting from 0, not 1
+bool ADS1299Manager::isChannelActive(uint8_t N_oneRef) {
+	 uint8_t N_zeroRef = N_oneRef-1;  //subtracts 1 so that we're counting from 0, not 1
 	 
 	 //get whether channel is active or not
 	 uint8_t reg = CH1SET+(uint8_t)N_zeroRef;
@@ -174,13 +172,13 @@ void ADS1299Manager::setAutoBiasGeneration(bool state) {
 	use_channels_for_bias = state;
 	
 	//step through the channels are recompute the bias state
-	for (int Ichan=1; Ichan<=OPENBCI_NCHAN_PER_BOARD;Ichan++) {
+	for (uint8_t Ichan=1; Ichan<=OPENBCI_NCHAN_PER_BOARD;Ichan++) {
 		alterBiasBasedOnChannelState(Ichan);
 	}
 }
 
 //note that N here one-referenced (ie [1...N]), not [0...N-1]
-void ADS1299Manager::alterBiasBasedOnChannelState(int N_oneRef) {
+void ADS1299Manager::alterBiasBasedOnChannelState(uint8_t N_oneRef) {
 	
 	 if ((use_channels_for_bias==true) && (isChannelActive(N_oneRef))) {
 	 	 //activate this channel's bias
@@ -191,13 +189,13 @@ void ADS1299Manager::alterBiasBasedOnChannelState(int N_oneRef) {
 }
 	
 
-void ADS1299Manager::deactivateBiasForChannel(int N_oneRef) {
-	int N_zeroRef = N_oneRef-1; //subtracts 1 so that we're counting from 0, not 1
+void ADS1299Manager::deactivateBiasForChannel(uint8_t N_oneRef) {
+	uint8_t N_zeroRef = N_oneRef-1; //subtracts 1 so that we're counting from 0, not 1
  	
 	//deactivate this channel's bias...both positive and negative
 	//see ADS1299 datasheet, PDF p44.
 	uint8_t reg, config;
-	for (int I=0;I<2;I++) {
+	for (uint8_t I=0;I<2;I++) {
 		if (I==0) {
 			reg = BIAS_SENSP;
 		} else {
@@ -208,15 +206,15 @@ void ADS1299Manager::deactivateBiasForChannel(int N_oneRef) {
 		ADS1299::WREG(reg,config); msp430_delay_ms(1);  //send the modified byte back to the ADS
 	}
 }
-void ADS1299Manager::activateBiasForChannel(int N_oneRef) {
-	int N_zeroRef = N_oneRef-1; //subtracts 1 so that we're counting from 0, not 1
+void ADS1299Manager::activateBiasForChannel(uint8_t N_oneRef) {
+	uint8_t N_zeroRef = N_oneRef-1; //subtracts 1 so that we're counting from 0, not 1
  	
 	//see ADS1299 datasheet, PDF p44.
 	//per Chip's experiments, if using the P inputs, just include the P inputs
 	//per Joel's experiements, if using the N inputs, include both P and N inputs
 	uint8_t reg, config;
-	int nLoop = 1;  if (use_neg_inputs) nLoop=2;
-	for (int i=0; i < nLoop; i++) {
+	uint8_t nLoop = 1;  if (use_neg_inputs) nLoop=2;
+	for (uint8_t i=0; i < nLoop; i++) {
 		reg = BIAS_SENSP;
 		if (i > 0) reg = BIAS_SENSN;
 		config = ADS1299::RREG(reg); //get the current bias settings
@@ -229,7 +227,7 @@ void ADS1299Manager::activateBiasForChannel(int N_oneRef) {
 //change the given channel's lead-off detection state...note: stops data colleciton to issue its commands
 //  N is the channel number: 1-8
 // 
-void ADS1299Manager::changeChannelLeadOffDetection(int N_oneRef, int code_OFF_ON, int code_P_N_Both)
+void ADS1299Manager::changeChannelLeadOffDetection(uint8_t N_oneRef, uint8_t code_OFF_ON, uint8_t code_P_N_Both)
 {
   uint8_t reg, config_p, config_n;
 	
@@ -313,11 +311,11 @@ void ADS1299Manager::configureInternalTestSignal(uint8_t amplitudeCode, uint8_t 
 	
 	ADS1299::WREG(CONFIG2,message); msp430_delay_ms(1);
 	
-       //ADS1299::WREG(CONFIG2,0b11010000);delay(1);   //set internal test signal, default amplitude, default speed, datasheet PDF Page 41
-      //ADS1299::WREG(CONFIG2,0b11010001);delay(1);   //set internal test signal, default amplitude, 2x speed, datasheet PDF Page 41
-      //ADS1299::WREG(CONFIG2,0b11010101);delay(1);   //set internal test signal, 2x amplitude, 2x speed, datasheet PDF Page 41
-      //ADS1299::WREG(CONFIG2,0b11010011); delay(1);  //set internal test signal, default amplitude, at DC, datasheet PDF Page 41
-      //ADS1299::WREG(CONFIG3,0b01101100); delay(1);  //use internal reference for center of bias creation, datasheet PDF p42 
+    //ADS1299::WREG(CONFIG2,0b11010000);delay(1);   //set internal test signal, default amplitude, default speed, datasheet PDF Page 41
+    //ADS1299::WREG(CONFIG2,0b11010001);delay(1);   //set internal test signal, default amplitude, 2x speed, datasheet PDF Page 41
+    //ADS1299::WREG(CONFIG2,0b11010101);delay(1);   //set internal test signal, 2x amplitude, 2x speed, datasheet PDF Page 41
+    //ADS1299::WREG(CONFIG2,0b11010011); delay(1);  //set internal test signal, default amplitude, at DC, datasheet PDF Page 41
+    //ADS1299::WREG(CONFIG3,0b01101100); delay(1);  //use internal reference for center of bias creation, datasheet PDF p42
 }
  
 //Start continuous data acquisition
@@ -326,12 +324,7 @@ void ADS1299Manager::start(void)
     ADS1299::RDATAC(); msp430_delay_ms(1);           // enter Read Data Continuous mode
     ADS1299::START();    //start the data acquisition
 }
-  
-//Query to see if data is available from the ADS1299...return TRUE is data is available
-int ADS1299Manager::isDataAvailable(void)
-{
-  return (!(GPIO_getInputPinValue(DRDY_PORT, DRDY_PIN)));
-}
+
   
 //Stop the continuous data acquisition
 void ADS1299Manager::stop(void)
@@ -339,102 +332,22 @@ void ADS1299Manager::stop(void)
     ADS1299::STOP(); msp430_delay_ms(1);   //start the data acquisition
     ADS1299::SDATAC(); msp430_delay_ms(1);      // exit Read Data Continuous mode to communicate with ADS
 }
-  
-//print as text each channel's data
-//   print channels 1-N (where N is 1-8...anything else will return with no action)
-//   sampleNumber is a number that, if greater than zero, will be printed at the start of the line
-//void ADS1299Manager::printChannelDataAsText(int N, long int sampleNumber)
-//{
-//	//check the inputs
-//	if ((N < 1) || (N > n_chan_all_boards)) return;
-//
-//	//print the sample number, if not disabled
-//	if (sampleNumber > 0) {
-//		Serial.print(sampleNumber);
-//		Serial.print(", ");
-//	}
-//
-//	//print each channel
-//	for (int chan = 0; chan < N; chan++ )
-//	{
-//		Serial.print(channelData[chan]);
-//		Serial.print(", ");
-//	}
-//
-//	//print end of line
-//	Serial.println();
-//};
 
-
-//write as binary each channel's data
-//   print channels 1-N (where N is 1-8...anything else will return with no action)
-//   sampleNumber is a number that, if greater than zero, will be printed at the start of the line
-//int32 val;
-//byte *val_ptr = (byte *)(&val);
-//void ADS1299Manager::writeChannelDataAsBinary(int N, long sampleNumber){
-//	ADS1299Manager::writeChannelDataAsBinary(N,sampleNumber,false,0,false);
-//}
-//void ADS1299Manager::writeChannelDataAsBinary(int N, long sampleNumber,bool useSyntheticData){
-//	ADS1299Manager::writeChannelDataAsBinary(N,sampleNumber,false,0,useSyntheticData);
-//}
-//void ADS1299Manager::writeChannelDataAsBinary(int N, long sampleNumber,long int auxValue){
-//	ADS1299Manager::writeChannelDataAsBinary(N,sampleNumber,true,auxValue,false);
-//}
-//void ADS1299Manager::writeChannelDataAsBinary(int N, long sampleNumber,long int auxValue, bool useSyntheticData){
-//	ADS1299Manager::writeChannelDataAsBinary(N,sampleNumber,true,auxValue,useSyntheticData);
-//}
-//void ADS1299Manager::writeChannelDataAsBinary(int N, long sampleNumber,bool sendAuxValue,
-//	long int auxValue, bool useSyntheticData)
-//{
-//	//check the inputs
-//	if ((N < 1) || (N > n_chan_all_boards)) return;
-//
-//	// Write start byte
-//	Serial.write( (byte) PCKT_START);
-//
-//	//write the length of the payload
-//	//byte byte_val = (1+8)*4;
-//	byte payloadBytes = (byte)((1+N)*4);    //length of data payload, bytes
-//	if (sendAuxValue) payloadBytes+= (byte)4;  //add four more bytes for the aux value
-//	Serial.write(payloadBytes);  //write the payload length
-//
-//	//write the sample number, if not disabled
-//	val = sampleNumber;
-//	Serial.write(val_ptr,4); //4 bytes long
-//
-//	//write each channel
-//	for (int chan = 0; chan < N; chan++ )
-//	{
-//		//get this channel's data
-//		if (useSyntheticData) {
-//			val = makeSyntheticSample(sampleNumber,chan);
-//			//val = sampleNumber;
-//		} else {
-//			//get the real EEG data for this channel
-//			val = channelData[chan];
-//		}
-//		Serial.write(val_ptr,4); //4 bytes long
-//	}
-//
-//	// Write the AUX value
-//	if (sendAuxValue) {
-//		val = auxValue;
-//		Serial.write(val_ptr,4); //4 bytes long
-//	}
-//
-//	// Write footer
-//	Serial.write((byte)PCKT_END);
-//
-//	// force everything out
-//	//Serial.flush();
-//};
-
-
-void ADS1299Manager::writeChannelDataAsUAISLab(uint32_t sampleNumber)
+void ADS1299Manager::writeChannelDataAsUAISLab(uint16_t sampleNumber)
 {
+//	uint8_t str[] = ", ", datbit;
+//	for(uint8_t j = 0; j<16; j++){
+//		datbit = bitRead(stat_1, 15-j);
+//		msp430_uart_write(&datbit, 1);
+//		if(j!=15) msp430_uart_write(str, 2);
+//	}
+//	str[0] = '\r';
+//	str[1] = '\n';
+//	msp430_uart_write(str, 2);
+
 	int32_t val;
 	uint8_t packet, *val_ptr = (uint8_t *)(&val);
-
+    stat_2 = 0;
 	packet = PCKT_START;
 	msp430_uart_write(&packet,1);                   // Write start byte
 	packet = PCKT_EEG;
@@ -444,9 +357,13 @@ void ADS1299Manager::writeChannelDataAsUAISLab(uint32_t sampleNumber)
 			(uint8_t)((1+8)*4);  //length of data payload, bytes
 	msp430_uart_write(&payloadBytes, 1);                          //write the length of the payload
 
-
-	val = sampleNumber;
-	msp430_uart_write(val_ptr, 4);                                 //write the sample number, if not disabled
+	if(use_neg_inputs){                                           //write lead-off detection result, if not disabled
+		val =((stat_1<<8) & 0xFF00) + (stat_2 & 0x00FF);
+	}else{
+		val =(stat_1 & 0xFF00) + ((stat_2>>8) & 0x00FF);
+	}
+	val = (val<<16) + sampleNumber;                               //write the sample number, if not disabled
+	msp430_uart_write(val_ptr, 4);
 
 
 	for (uint8_t chan = 0; chan < (8); chan++ ){          //write each channel
@@ -459,84 +376,6 @@ void ADS1299Manager::writeChannelDataAsUAISLab(uint32_t sampleNumber)
 	// force everything out
 	//msp430_uart_flush();
 };
-
-//write channel data using binary format of ModularEEG so that it can be used by BrainBay (P2 protocol)
-//this only sends 6 channels of data, per the P2 protocol
-//http://www.shifz.org/brainbay/manuals/brainbay_developer_manual.pdf
-//#define max_int16 (32767)
-//#define min_int16 (-32767)
-//void ADS1299Manager::writeChannelDataAsOpenEEG_P2(long sampleNumber) {
-//	ADS1299Manager::writeChannelDataAsOpenEEG_P2(sampleNumber,false);
-//}
-//void ADS1299Manager::writeChannelDataAsOpenEEG_P2(long sampleNumber,bool useSyntheticData) {
-//	static int count = -1;
-//	byte sync0 = 0xA5;
-//	byte sync1 = 0x5A;
-//	byte version = 2;
-//
-//	Serial.write(sync0);
-//	Serial.write(sync1);
-//	Serial.write(version);
-//	byte foo = (byte)sampleNumber;
-//	if (foo == sync0) foo--;
-//	Serial.write(foo);
-//
-//	long val32; //32-bit
-//	int val_i16;  //16-bit
-//	unsigned int val_u16;  //16-bit
-//	byte *val16_ptr = (byte *)(&val_u16);  //points to the memory for the variable above
-//	for (int chan = 0; chan < 6; chan++ )
-//	{
-//		//get this channel's data
-//		if (useSyntheticData) {
-//			//generate XX uV pk-pk signal
-//			//long time_samp_255 = (long)((sampleNumber) & (0x000000FF));  //make an 8-bit ramp waveform
-//			//time_samp_255 = (long)((time_samp_255*(long)(chan+1)) & (0x000000FF)); //each channel is faster than the previous
-//			//time_samp_255 += 256L*2L;  //make zero mean...empirically tuned via BrainBay visualization
-//			//val32 = (synthetic_amplitude_counts * time_samp_255) / 255L; //scaled zero-mean ramp
-//			val32 = makeSyntheticSample(sampleNumber,chan) + 127L + 256L*2L;  //make zero mean...empirically tuned via BrainBay visualization
-//		} else {
-//			//get the real EEG data for this channel
-//			val32 = channelData[chan];
-//		}
-//
-//		//prepare the value for transmission
-//		val32 = val32 / (32);  //shrink to fit within a 16-bit number
-//		val32 = constrain(val32,min_int16,max_int16);  //constrain to fit in 16 bits
-//		val_u16 = (unsigned int) (val32 & (0x0000FFFF));  //truncate and cast
-//		if (val_u16 > 1023) val_u16 = 1023;
-//
-//		//Serial.write(val16_ptr,2); //low byte than high byte on Arduino
-//		//Serial.write((byte)((val_u16 >> 8) & 0x00FF)); //high byte
-//		//Serial.write((byte)(val_u16 & 0x00FF)); //low byte
-//		foo = (byte)((val_u16 >> 8) & 0x00FF); //high byte
-//		if (foo == sync0) foo--;
-//		Serial.write(foo);
-//		foo = (byte)(val_u16 & 0x00FF); //high byte
-//		if (foo == sync0) foo--;
-//		Serial.write(foo);
-//
-//
-//
-//	}
-//	//byte switches = 0b00000000;  //the last thing required by the P2 data protocol
-//	byte switches = 0x07;
-//	count++; if (count >= 18) count=0;
-//	if (count >= 9) {
-//		switches = 0x0F;
-//	}
-//	Serial.write(switches);
-//}
-//
-//#define synthetic_amplitude_counts (8950L)   //counts peak-to-peak...should be 200 uV pk-pk  2.0*(100e-6 / (4.5 / 24 / 2^24))
-//long int ADS1299Manager::makeSyntheticSample(long sampleNumber,int chan) {
-//	//generate XX uV pk-pk signal
-//	long time_samp_255 = (long)((sampleNumber) & (0x000000FF));  //make an 8-bit ramp waveform
-//	time_samp_255 = (long)((time_samp_255*(long)(chan+1)) & (0x000000FF)); //each channel is faster than the previous
-//	//time_samp_255 += 256L*2L;  //make zero mean...empirically tuned via BrainBay visualization
-//	time_samp_255 -= 127L;
-//	return (synthetic_amplitude_counts * time_samp_255) / 255L; //scaled zero-mean ramp
-//};
 
 //print out the state of all the control registers
 void ADS1299Manager::printAllRegisters(void)   
@@ -552,7 +391,7 @@ void ADS1299Manager::printAllRegisters(void)
 
 //only use SRB1 if all use_SRB2 are set to false
 bool ADS1299Manager::use_SRB1(void) {
-	for (int Ichan=0; Ichan < OPENBCI_NCHAN_PER_BOARD; Ichan++) {
+	for (uint8_t Ichan=0; Ichan < OPENBCI_NCHAN_PER_BOARD; Ichan++) {
 		if (use_SRB2[Ichan]) {
 			return false;
 		}

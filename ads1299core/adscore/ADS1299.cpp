@@ -13,11 +13,20 @@
 #include "msp430_clock.h"
 #include "msp430_spi_a0.h"
 #include "msp430_uart.h"
+#include "msp430_interrupt.h"
+#include "msp430_interrupt_parameters.h"
 
-void ADS1299::initialize(){
-	isDaisy = false;
-	DRDY_PORT = GPIO_PORT_P2;
-	DRDY_PIN = GPIO_PIN1;
+#define bitRead(data, bit)  ((data & (0x01<<bit))?'1':'0')
+
+void ADS1299::initialize(void (*cb)(void)){
+	struct int_param_s int_param;
+	int_param.cb = cb;
+	int_param.pin = INT_PIN_P21;
+	int_param.lp_exit = INT_EXIT_LPM0;
+	int_param.active_low = 1;
+
+//	DRDY_PORT = GPIO_PORT_P2;
+//	DRDY_PIN = GPIO_PIN1;
 	CS_PORT = GPIO_PORT_P6;
 	CS_PIN = GPIO_PIN0;
 	START_PORT = GPIO_PORT_P4;
@@ -25,7 +34,9 @@ void ADS1299::initialize(){
 	RST_PORT = GPIO_PORT_P3;
 	RST_PIN = GPIO_PIN2;
 	
-	GPIO_setAsInputPinWithPullUpResistor(DRDY_PORT, DRDY_PIN);
+//	GPIO_setAsInputPinWithPullUpResistor(DRDY_PORT, DRDY_PIN);
+	msp430_reg_int_cb(int_param.cb, int_param.pin, int_param.lp_exit,
+			int_param.active_low);
 
 	GPIO_setAsOutputPin(CS_PORT, CS_PIN);
 	GPIO_setOutputHighOnPin(CS_PORT, CS_PIN);
@@ -152,14 +163,14 @@ void ADS1299::RREGS(uint8_t _address, uint8_t _numRegistersMinusOne) {
     GPIO_setOutputLowOnPin(CS_PORT, CS_PIN); 				//  open SPI
     msp430_spi_a0_transmitData(opcode1); 					//  opcode1
     msp430_spi_a0_transmitData(_numRegistersMinusOne);	//  opcode2
-    for(int i = 0; i <= _numRegistersMinusOne; i++){
+    for(uint8_t i = 0; i <= _numRegistersMinusOne; i++){
         regData[_address + i] = msp430_spi_a0_transmitData(0x00); 	//  add register byte to mirror array
 		}
     GPIO_setOutputHighOnPin(CS_PORT, CS_PIN); 			//  close SPI
 	if(verbose){						//  verbose output
 		uint8_t str[2];
 		uint8_t datbit;
-		for(int i = 0; i<= _numRegistersMinusOne; i++){
+		for(uint8_t i = 0; i<= _numRegistersMinusOne; i++){
 			printRegisterName(_address + i);
 			printHex(_address + i);
 			str[0] = ',';
@@ -167,7 +178,7 @@ void ADS1299::RREGS(uint8_t _address, uint8_t _numRegistersMinusOne) {
 			msp430_uart_write(str, 2);
 			printHex(regData[_address + i]);
 			msp430_uart_write(str, 2);
-			for(int j = 0; j<8; j++){
+			for(uint8_t j = 0; j<8; j++){
 				datbit = bitRead(regData[_address + i], 7-j);
 				msp430_uart_write(&datbit, 1);
 				if(j!=7) msp430_uart_write(str, 2);
@@ -205,7 +216,7 @@ void ADS1299::WREGS(uint8_t _address, uint8_t _numRegistersMinusOne) {
     GPIO_setOutputLowOnPin(CS_PORT, CS_PIN); 				//  open SPI
     msp430_spi_a0_transmitData(opcode1);					//  Send WREG command & address
     msp430_spi_a0_transmitData(_numRegistersMinusOne);	//	Send number of registers to read -1
-	for (int i=_address; i <=(_address + _numRegistersMinusOne); i++){
+	for (uint8_t i=_address; i <=(_address + _numRegistersMinusOne); i++){
 		msp430_spi_a0_transmitData(regData[i]);			//  Write to the registers
 	}	
 	GPIO_setOutputHighOnPin(CS_PORT, CS_PIN); 				//  close SPI
@@ -230,7 +241,7 @@ void ADS1299::WREGS(uint8_t _address, uint8_t _numRegistersMinusOne) {
 
 void ADS1299::updateChannelData(){
 	uint8_t inByte;
-	int nchan=8;  //assume 8 channel.  If needed, it automatically changes to 16 automatically in a later block.
+	uint8_t nchan=8;  //assume 8 channel.  If needed, it automatically changes to 16 automatically in a later block.
 	GPIO_setOutputLowOnPin(CS_PORT, CS_PIN);				//  open SPI
 
 	inByte = msp430_spi_a0_transmitData(0x00);//  read 3 byte status register from ADS 1 (1100+LOFF_STATP+LOFF_STATN+GPIO[7:4])
@@ -240,35 +251,16 @@ void ADS1299::updateChannelData(){
 	inByte = msp430_spi_a0_transmitData(0x00);
 	stat_1 = (stat_1<<4) | (inByte>>4);
 	
-	for(int i = 0; i<8; i++){
-		for(int j=0; j<3; j++){		//  read 24 bits of channel data from 1st ADS in 8 3 byte chunks
+	for(uint8_t i = 0; i<8; i++){
+		for(uint8_t j=0; j<3; j++){		//  read 24 bits of channel data from 1st ADS in 8 3 byte chunks
 			inByte = msp430_spi_a0_transmitData(0x00);
 			channelData[i] = (channelData[i]<<8) | inByte;
 		}
 	}
-	
-	if (isDaisy) {
-		nchan = 16;
-		// READ CHANNEL DATA FROM SECOND ADS IN DAISY LINE
-		inByte = msp430_spi_a0_transmitData(0x00);//  read 3 byte status register from ADS 1 (1100+LOFF_STATP+LOFF_STATN+GPIO[7:4])
-		stat_2 = (stat_1<<8) | inByte;
-		inByte = msp430_spi_a0_transmitData(0x00);
-		stat_2 = (stat_1<<8) | inByte;
-		inByte = msp430_spi_a0_transmitData(0x00);
-		stat_2 = (stat_1<<4) | (inByte>>4);
-		
-		for(int i = 8; i<16; i++){
-			for(int j=0; j<3; j++){		//  read 24 bits of channel data from 2nd ADS in 8 3 byte chunks
-				inByte = msp430_spi_a0_transmitData(0x00);
-				channelData[i] = (channelData[i]<<8) | inByte;
-			}
-		}
-	}
-	
 	GPIO_setOutputHighOnPin(CS_PORT, CS_PIN);				//  close SPI
 	
 	//reformat the numbers
-	for(int i=0; i<nchan; i++){			// convert 3 byte 2's compliment to 4 byte 2's compliment	
+	for(uint8_t i=0; i<nchan; i++){			// convert 3 byte 2's compliment to 4 byte 2's compliment
 		if(channelData[i] & 0x800000){
 			channelData[i] |= 0xFF000000;
 		}else{
@@ -276,14 +268,13 @@ void ADS1299::updateChannelData(){
 		}
 	}
 }
-
 	
 //read data
 void ADS1299::RDATA() {				//  use in Stop Read Continuous mode when DRDY goes low
 	uint8_t inByte;
 	stat_1 = 0;							//  clear the status registers
-	stat_2 = 0;	
-	int nchan = 8;	//assume 8 channel.  If needed, it automatically changes to 16 automatically in a later block.
+//	stat_2 = 0;
+	uint8_t nchan = 8;	//assume 8 channel.  If needed, it automatically changes to 16 automatically in a later block.
 	GPIO_setOutputLowOnPin(CS_PORT, CS_PIN);				//  open SPI
 	msp430_spi_a0_transmitData(_RDATA);
 	
@@ -295,33 +286,13 @@ void ADS1299::RDATA() {				//  use in Stop Read Continuous mode when DRDY goes l
 	inByte = msp430_spi_a0_transmitData(0x00);
 	stat_1 = (stat_1<<4) | (inByte>>4);
 	
-	for(int i = 0; i<8; i++){
-		for(int j=0; j<3; j++){		//  read 24 bits of channel data from 1st ADS in 8 3 byte chunks
+	for(uint8_t i = 0; i<8; i++){
+		for(uint8_t j=0; j<3; j++){		//  read 24 bits of channel data from 1st ADS in 8 3 byte chunks
 			inByte = msp430_spi_a0_transmitData(0x00);
 			channelData[i] = (channelData[i]<<8) | inByte;
 		}
 	}
-	
-	if (isDaisy) {
-		nchan = 16;
-		
-		// READ CHANNEL DATA FROM SECOND ADS IN DAISY LINE
-		inByte = msp430_spi_a0_transmitData(0x00);//  read 3 byte status register from ADS 1 (1100+LOFF_STATP+LOFF_STATN+GPIO[7:4])
-		stat_1 = (stat_1<<8) | inByte;
-		inByte = msp430_spi_a0_transmitData(0x00);
-		stat_1 = (stat_1<<8) | inByte;
-		inByte = msp430_spi_a0_transmitData(0x00);
-		stat_1 = (stat_1<<4) | (inByte>>4);
-		
-		for(int i = 8; i<16; i++){
-			for(int j=0; j<3; j++){		//  read 24 bits of channel data from 2nd ADS in 8 3 byte chunks
-				inByte = msp430_spi_a0_transmitData(0x00);
-				channelData[i] = (channelData[i]<<8) | inByte;
-			}
-		}
-	}
-	
-	for(int i=0; i<nchan; i++){			// convert 3 byte 2's compliment to 4 byte 2's compliment	
+	for(uint8_t i=0; i<nchan; i++){			// convert 3 byte 2's compliment to 4 byte 2's compliment
 		if(channelData[i] & 0x800000){
 			channelData[i] |= 0xFF000000;
 		}else{
