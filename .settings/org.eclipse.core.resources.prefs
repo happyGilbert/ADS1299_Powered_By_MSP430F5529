@@ -1,6 +1,8 @@
 eclipse.preferences.version=1
 encoding//Debug/ads1299core/adscore/subdir_rules.mk=UTF-8
 encoding//Debug/ads1299core/adscore/subdir_vars.mk=UTF-8
+encoding//Debug/ads1299core/subdir_rules.mk=UTF-8
+encoding//Debug/ads1299core/subdir_vars.mk=UTF-8
 encoding//Debug/makefile=UTF-8
 encoding//Debug/msp430core/driverlib/MSP430F5xx_6xx/subdir_rules.mk=UTF-8
 encoding//Debug/msp430core/driverlib/MSP430F5xx_6xx/subdir_vars.mk=UTF-8
